@@ -7,18 +7,15 @@ const reactionSchema = new mongoose.Schema({
 
 const messageSchema = new mongoose.Schema({
   senderName: { type: String, required: true },
-  recipientName: { type: String }, // Made optional to prevent legacy validation crashes
+  recipientName: { type: String },
   text: { type: String, default: '' },
   mediaUrl: { type: String },
   status: { type: String, enum: ['sent', 'delivered', 'seen'], default: 'sent' },
   reactions: [reactionSchema],
   isEdited: { type: Boolean, default: false },
-  
-  // 👇 Added this to save replies permanently 👇
-  replyTo: { 
-    type: Object, 
-    default: null 
-  }
-}, { timestamps: true, strict: false }); // Added strict: false as a safety net
+  replyTo: { type: Object, default: null },
+  // Added time field to permanently store the client's local time string
+  time: { type: String, required: true }
+}, { timestamps: true, strict: false });
 
 export const Message = mongoose.models.Message || mongoose.model('Message', messageSchema);

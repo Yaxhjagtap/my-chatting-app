@@ -32,8 +32,9 @@ export async function GET(req: Request) {
       status: msg.status,
       reactions: msg.reactions || [],
       isEdited: msg.isEdited || false,
-      replyTo: msg.replyTo || undefined, // <-- Added to send reply data to frontend
-      time: new Date(msg.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) // <-- Updated to strictly use 12-hour format
+      replyTo: msg.replyTo || undefined,
+      // Use the stored time string directly (falls back safely for legacy records)
+      time: msg.time || new Date(msg.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
     }));
 
     return NextResponse.json(formattedMessages);
@@ -55,7 +56,9 @@ export async function POST(req: Request) {
       mediaUrl: body.mediaUrl,
       status: 'sent',
       reactions: [],
-      replyTo: body.replyTo || null // <-- Added to save reply data to database
+      replyTo: body.replyTo || null,
+      // Capture and save the exact local time string sent from the frontend
+      time: body.time || new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
     });
 
     return NextResponse.json({ success: true, message: newMessage });
