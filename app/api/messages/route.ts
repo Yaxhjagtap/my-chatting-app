@@ -32,7 +32,8 @@ export async function GET(req: Request) {
       status: msg.status,
       reactions: msg.reactions || [],
       isEdited: msg.isEdited || false,
-      time: new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      replyTo: msg.replyTo || undefined, // <-- Added to send reply data to frontend
+      time: new Date(msg.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) // <-- Updated to strictly use 12-hour format
     }));
 
     return NextResponse.json(formattedMessages);
@@ -53,7 +54,8 @@ export async function POST(req: Request) {
       text: body.text || '',
       mediaUrl: body.mediaUrl,
       status: 'sent',
-      reactions: []
+      reactions: [],
+      replyTo: body.replyTo || null // <-- Added to save reply data to database
     });
 
     return NextResponse.json({ success: true, message: newMessage });

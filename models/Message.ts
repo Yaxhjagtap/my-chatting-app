@@ -12,7 +12,13 @@ const messageSchema = new mongoose.Schema({
   mediaUrl: { type: String },
   status: { type: String, enum: ['sent', 'delivered', 'seen'], default: 'sent' },
   reactions: [reactionSchema],
-  isEdited: { type: Boolean, default: false }
-}, { timestamps: true });
+  isEdited: { type: Boolean, default: false },
+  
+  // 👇 Added this to save replies permanently 👇
+  replyTo: { 
+    type: Object, 
+    default: null 
+  }
+}, { timestamps: true, strict: false }); // Added strict: false as a safety net
 
 export const Message = mongoose.models.Message || mongoose.model('Message', messageSchema);
