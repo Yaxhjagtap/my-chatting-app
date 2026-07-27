@@ -4,42 +4,60 @@ const next = require('next');
 const { Server } = require('socket.io');
 
 const dev = process.env.NODE_ENV !== 'production';
-const app = next({ dev });
+const hostname = 'localhost';
+const port = 3000;
+
+const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
-  const server = createServer((req, res) => {
+  const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
     handle(req, res, parsedUrl);
   });
 
-  const io = new Server(server, {
-    cors: { origin: "*" }
+  const io = new Server(httpServer, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    },
+    transports: ['websocket', 'polling']
   });
 
   io.on('connection', (socket) => {
-    console.log('User connected:', socket.id);
-
-    // Join a private room for Yash & Niku
-    socket.join('private_room_yash_niku');
+    console.log(`User connected: ${socket.id}`);
 
     socket.on('send_message', (data) => {
-      // Broadcast to the room
-      io.to('private_room_yash_niku').emit('receive_message', data);
+      io.emit('receive_message', data);
     });
 
     socket.on('typing', (data) => {
-      socket.to('private_room_yash_niku').emit('user_typing', data);
+      socket.broadcast.emit('user_typing', data);
+    });
+
+    socket.on('mark_seen', (data) => {
+      io.emit('message_seen_update', data);
+    });
+
+    socket.on('edit_message', (data) => {
+      io.emit('message_edited', data);
+    });
+
+    socket.on('delete_message', (data) => {
+      io.emit('message_deleted', data);
+    });
+
+    socket.on('add_reaction', (data) => {
+      io.emit('reaction_added', data);
     });
 
     socket.on('disconnect', () => {
-      console.log('User disconnected:', socket.id);
+      console.log(`User disconnected: ${socket.id}`);
     });
   });
 
-  const PORT = process.env.PORT || 3000;
-  server.listen(PORT, (err) => {
+  httpServer.listen(port, (err) => {
     if (err) throw err;
-    console.log(`> Ready on http://localhost:${PORT}`);
+    console.log(`> Ready on http://${hostname}:${port}`);
   });
 });
