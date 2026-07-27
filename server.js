@@ -10,6 +10,10 @@ const port = parseInt(process.env.PORT || '3000', 10);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
+// Tracking Maps for Online/Offline Status
+const socketUserMap = new Map(); // Maps socket.id -> username
+const userStatusMap = new Map(); // Maps username -> { isOnline, lastSeen }
+
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
@@ -25,7 +29,20 @@ app.prepare().then(() => {
   });
 
   io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.id}`);
+    console.log(`Socket connected: ${socket.id}`);
+
+    // 1. Send the current online/offline status of everyone to the new connection
+    socket.emit('initial_statuses', Array.from(userStatusMap.entries()));
+
+    // 2. When a user logs in / connects
+    socket.on('user_connected', (username) => {
+      socketUserMap.set(socket.id, username);
+      userStatusMap.set(username, { isOnline: true, lastSeen: null });
+      
+      console.log(`${username} is online`);
+      // Broadcast to everyone else
+      io.emit('user_status_update', { username, isOnline: true, lastSeen: null });
+    });
 
     socket.on('send_message', (data) => {
       io.emit('receive_message', data);
@@ -51,8 +68,20 @@ app.prepare().then(() => {
       io.emit('reaction_added', data);
     });
 
+    // 3. When a user closes the tab / app
     socket.on('disconnect', () => {
-      console.log(`User disconnected: ${socket.id}`);
+      const username = socketUserMap.get(socket.id);
+      if (username) {
+        console.log(`${username} went offline`);
+        const lastSeen = new Date().toISOString();
+        
+        // Update server memory
+        userStatusMap.set(username, { isOnline: false, lastSeen });
+        socketUserMap.delete(socket.id);
+        
+        // Tell frontend they went offline
+        io.emit('user_status_update', { username, isOnline: false, lastSeen });
+      }
     });
   });
 

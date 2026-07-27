@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Check, CheckCheck, ChevronLeft, LogOut, Lock, User as UserIcon, Search, Edit2, Trash2, Smile, Settings } from 'lucide-react';
+import { Send, Check, CheckCheck, ChevronLeft, LogOut, Lock, User as UserIcon, Search, Edit2, Trash2, Smile, Settings, Reply } from 'lucide-react';
 import io, { Socket } from 'socket.io-client';
 
 interface ReactionType {
@@ -20,6 +20,11 @@ interface MessageType {
   status?: 'sent' | 'delivered' | 'seen';
   reactions?: ReactionType[];
   isEdited?: boolean;
+  replyTo?: {
+    id: string;
+    senderName: string;
+    text: string;
+  };
 }
 
 interface UserType {
@@ -27,6 +32,7 @@ interface UserType {
   name: string;
   avatar?: string;
   isOnline?: boolean;
+  lastSeen?: string | null;
 }
 
 let socket: Socket;
@@ -38,7 +44,8 @@ const MessageBubble = ({
   currentUser,
   onEdit,
   onDelete,
-  onReact
+  onReact,
+  onReply
 }: { 
   msg: MessageType; 
   isMe: boolean; 
@@ -47,6 +54,7 @@ const MessageBubble = ({
   onEdit: (msg: MessageType) => void;
   onDelete: (id: string) => void;
   onReact: (id: string, emoji: string) => void;
+  onReply: (msg: MessageType) => void;
 }) => {
   const bubbleRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
@@ -88,24 +96,25 @@ const MessageBubble = ({
       className={`flex flex-col relative group mb-4 ${isMe ? 'items-end' : 'items-start'}`}
     >
       <div className={`relative flex items-center gap-2 max-w-[75%] md:max-w-[65%] ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-        {/* Hover Action Menu */}
-        <div className={`absolute top-0 ${isMe ? '-left-16' : '-right-16'} hidden group-hover:flex items-center gap-1 bg-neutral-800/90 backdrop-blur-md rounded-full px-2 py-1 z-20 shadow-lg`}>
-          <button onClick={() => setShowReactionPicker(!showReactionPicker)} className="text-neutral-300 hover:text-white p-1 transition">
+        <div className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} hidden group-hover:flex items-center gap-1 bg-neutral-800/90 backdrop-blur-md rounded-full px-2 py-1 z-20 shadow-lg`}>
+          <button onClick={() => setShowReactionPicker(!showReactionPicker)} className="text-neutral-300 hover:text-white p-1 transition" title="React">
             <Smile size={14} />
           </button>
+          <button onClick={() => onReply(msg)} className="text-neutral-300 hover:text-white p-1 transition" title="Reply">
+            <Reply size={14} />
+          </button>
           {isMe && msg.text && (
-            <button onClick={() => onEdit(msg)} className="text-neutral-300 hover:text-white p-1 transition">
+            <button onClick={() => onEdit(msg)} className="text-neutral-300 hover:text-white p-1 transition" title="Edit">
               <Edit2 size={13} />
             </button>
           )}
           {isMe && (
-            <button onClick={() => onDelete(msg._id || msg.id)} className="text-neutral-300 hover:text-rose-400 p-1 transition">
+            <button onClick={() => onDelete(msg._id || msg.id)} className="text-neutral-300 hover:text-rose-400 p-1 transition" title="Delete">
               <Trash2 size={13} />
             </button>
           )}
         </div>
 
-        {/* Reaction Picker Popover */}
         {showReactionPicker && (
           <div className={`absolute -top-12 ${isMe ? 'right-0' : 'left-0'} flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 p-1.5 rounded-full shadow-2xl z-30`}>
             {emojis.map((emoji) => (
@@ -120,16 +129,24 @@ const MessageBubble = ({
           </div>
         )}
 
-        {/* Message Bubble Box */}
         <div className={`relative px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words whitespace-pre-wrap ${
             isMe 
               ? 'bg-gradient-to-br from-pink-500 to-blue-500 text-white rounded-2xl rounded-br-sm' 
               : 'bg-neutral-100 dark:bg-neutral-900 dark:text-neutral-100 rounded-2xl rounded-bl-sm border border-neutral-200/50 dark:border-neutral-800'
           }`}>
+          
+          {msg.replyTo && (
+            <div className={`text-xs mb-2 p-2 rounded-lg border-l-4 opacity-90 ${isMe ? 'bg-black/20 border-white/50 text-white' : 'bg-neutral-200/50 dark:bg-black/20 border-pink-500 dark:text-neutral-300'}`}>
+              <span className="font-semibold block text-[11px] mb-0.5">
+                {msg.replyTo.senderName === currentUser ? 'You' : msg.replyTo.senderName}
+              </span>
+              <span className="line-clamp-1">{msg.replyTo.text}</span>
+            </div>
+          )}
+
           {msg.text && <span>{msg.text}</span>}
           {msg.isEdited && <span className="text-[10px] opacity-70 ml-1.5 font-normal">(edited)</span>}
           
-          {/* Reactions Floating Badge */}
           {msg.reactions && msg.reactions.length > 0 && (
             <div className={`absolute -bottom-3 ${isMe ? 'right-3' : 'left-3'} flex flex-wrap gap-1 z-10`}>
               {Object.entries(
@@ -173,10 +190,13 @@ export default function ChatApp() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editNameInput, setEditNameInput] = useState('');
   const [selectedEmojiAvatar, setSelectedEmojiAvatar] = useState('😎');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [messages, setMessages] = useState<MessageType[]>([]);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false); // New loading state
   const [inputText, setInputText] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [replyingToMessage, setReplyingToMessage] = useState<MessageType | null>(null);
   const [partnerTyping, setPartnerTyping] = useState(false);
   
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -191,6 +211,12 @@ export default function ChatApp() {
       if (parsed.avatar) setSelectedEmojiAvatar(parsed.avatar);
     }
   }, []);
+
+  const formatLastSeen = (dateString?: string | null) => {
+    if (!dateString) return 'Offline';
+    const date = new Date(dateString);
+    return `Last seen at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -210,15 +236,45 @@ export default function ChatApp() {
 
     socket = io({ transports: ['websocket', 'polling'] });
 
+    socket.emit('user_connected', user.name);
+
+    socket.on('initial_statuses', (statuses: [string, { isOnline: boolean, lastSeen: string | null }][]) => {
+      const statusMap = new Map(statuses);
+      setUsersList((prev) => prev.map(u => {
+        const status = statusMap.get(u.name);
+        return status ? { ...u, isOnline: status.isOnline, lastSeen: status.lastSeen } : u;
+      }));
+    });
+
+    socket.on('user_status_update', (data: { username: string, isOnline: boolean, lastSeen: string | null }) => {
+      setUsersList((prev) => prev.map(u => 
+        u.name === data.username ? { ...u, isOnline: data.isOnline, lastSeen: data.lastSeen } : u
+      ));
+      
+      setActivePartner((prev) => {
+        if (prev && prev.name === data.username) {
+          return { ...prev, isOnline: data.isOnline, lastSeen: data.lastSeen };
+        }
+        return prev;
+      });
+    });
+
+    // STRICT SOCKET FILTER APPLIED HERE
     socket.on('receive_message', (data: MessageType) => {
-      if (activePartner && (data.senderName === activePartner.name || data.recipientName === activePartner.name)) {
-        setMessages((prev) => {
-          const exists = prev.some(m => (data._id && m._id === data._id) || m.id === data.id);
-          if (exists) return prev;
-          return [...prev, data];
-        });
+      if (activePartner && user) {
+        const isExactCurrentChat = 
+          (data.senderName === user.name && data.recipientName === activePartner.name) ||
+          (data.senderName === activePartner.name && data.recipientName === user.name);
+
+        if (isExactCurrentChat) {
+          setMessages((prev) => {
+            const exists = prev.some(m => (data._id && m._id === data._id) || m.id === data.id);
+            if (exists) return prev;
+            return [...prev, data];
+          });
+          setPartnerTyping(false);
+        }
       }
-      setPartnerTyping(false);
     });
 
     socket.on('message_edited', (updatedMsg: MessageType) => {
@@ -256,6 +312,7 @@ export default function ChatApp() {
     if (!user || !activePartner) return;
 
     const fetchMessages = async () => {
+      setIsLoadingMessages(true); // START LOADING
       try {
         const res = await fetch(`/api/messages?user1=${user.name}&user2=${activePartner.name}`);
         if (res.ok) {
@@ -264,6 +321,8 @@ export default function ChatApp() {
         }
       } catch (error) {
         console.error("Failed to load chat history", error);
+      } finally {
+        setIsLoadingMessages(false); // STOP LOADING
       }
     };
     fetchMessages();
@@ -271,7 +330,7 @@ export default function ChatApp() {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, partnerTyping]);
+  }, [messages, partnerTyping, replyingToMessage, isLoadingMessages]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -365,14 +424,20 @@ export default function ChatApp() {
       senderName: user.name,
       recipientName: activePartner.name,
       text: inputText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }), 
       status: 'sent',
-      reactions: []
+      reactions: [],
+      replyTo: replyingToMessage ? {
+        id: replyingToMessage._id || replyingToMessage.id,
+        senderName: replyingToMessage.senderName,
+        text: replyingToMessage.text
+      } : undefined
     };
 
     setMessages((prev) => [...prev, newMessage]);
     socket.emit('send_message', newMessage);
     setInputText('');
+    setReplyingToMessage(null); 
     socket.emit('typing', { sender: user.name, isTyping: false });
 
     try {
@@ -407,6 +472,12 @@ export default function ChatApp() {
   const handleStartEdit = (msg: MessageType) => {
     setInputText(msg.text);
     setEditingMessageId(msg._id || msg.id);
+    setReplyingToMessage(null); 
+  };
+
+  const handleStartReply = (msg: MessageType) => {
+    setReplyingToMessage(msg);
+    setEditingMessageId(null); 
   };
 
   const handleAddReaction = async (id: string, emoji: string) => {
@@ -523,7 +594,13 @@ export default function ChatApp() {
         <div className="px-4 py-3">
           <div className="flex items-center gap-2 bg-neutral-100 dark:bg-neutral-900 px-3.5 py-2.5 rounded-2xl border border-neutral-200/50 dark:border-neutral-800">
             <Search size={18} className="text-neutral-400" />
-            <input type="text" placeholder="Search chats..." className="bg-transparent w-full text-sm outline-none text-neutral-900 dark:text-white placeholder:text-neutral-500" />
+            <input 
+              type="text" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search chats..." 
+              className="bg-transparent w-full text-sm outline-none text-neutral-900 dark:text-white placeholder:text-neutral-500" 
+            />
           </div>
         </div>
 
@@ -532,33 +609,48 @@ export default function ChatApp() {
           {usersList.length === 0 ? (
             <div className="text-center py-12 text-neutral-500 text-sm">No other users found. Register another account in a separate tab to chat!</div>
           ) : (
-            usersList.map((partner) => (
-              <div 
-                key={partner._id}
-                onClick={() => setActivePartner(partner)}
-                className="flex items-center gap-3.5 p-3 rounded-2xl hover:bg-neutral-100 dark:hover:bg-neutral-900/60 cursor-pointer transition"
-              >
-                <div className="relative">
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-pink-400 to-blue-400 p-[2px]">
-                    <div className="w-full h-full rounded-full bg-neutral-100 dark:bg-black flex items-center justify-center text-xl">
-                      {partner.avatar || '😎'}
+            usersList
+              .filter(partner => partner.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              .map((partner) => (
+                <div 
+                  key={partner._id}
+                  onClick={() => {
+                    setActivePartner(partner);
+                    setSearchQuery('');
+                  }}
+                  className="flex items-center gap-3.5 p-3 rounded-2xl hover:bg-neutral-100 dark:hover:bg-neutral-900/60 cursor-pointer transition"
+                >
+                  <div className="relative">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-pink-400 to-blue-400 p-[2px]">
+                      <div className="w-full h-full rounded-full bg-neutral-100 dark:bg-black flex items-center justify-center text-xl">
+                        {partner.avatar || '😎'}
+                      </div>
                     </div>
+                    {partner.isOnline ? (
+                      <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
+                    ) : (
+                      <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-neutral-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
+                    )}
                   </div>
-                  <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
-                </div>
-                <div className="flex-1 border-b border-neutral-100 dark:border-neutral-900 pb-3">
-                  <div className="flex items-center justify-between">
-                    <h2 className="font-semibold text-base">{partner.name}</h2>
-                    <span className="text-[11px] text-neutral-400">Online</span>
+                  <div className="flex-1 border-b border-neutral-100 dark:border-neutral-900 pb-3">
+                    <div className="flex items-center justify-between">
+                      <h2 className="font-semibold text-base">{partner.name}</h2>
+                      {partner.isOnline ? (
+                        <span className="text-[11px] text-emerald-500">Online</span>
+                      ) : (
+                        <span className="text-[11px] text-neutral-500">Offline</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-neutral-400 truncate mt-0.5">Tap to open conversation</p>
                   </div>
-                  <p className="text-xs text-neutral-400 truncate mt-0.5">Tap to open conversation</p>
                 </div>
-              </div>
             ))
+          )}
+          {usersList.length > 0 && usersList.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+            <div className="text-center py-12 text-neutral-500 text-sm">No chats match "{searchQuery}"</div>
           )}
         </main>
 
-        {/* PROFILE EDIT & EMOJI SELECTOR MODAL */}
         {showProfileModal && (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm bg-neutral-900 border border-neutral-800 p-6 rounded-3xl shadow-2xl space-y-5">
@@ -575,7 +667,6 @@ export default function ChatApp() {
                 </div>
                 <span className="text-xs text-neutral-400">Choose your avatar emoji</span>
                 
-                {/* Emoji Grid Selector */}
                 <div className="grid grid-cols-7 gap-2 bg-neutral-950 p-3 rounded-2xl border border-neutral-800">
                   {avatarEmojis.map((emoji) => (
                     <button
@@ -627,41 +718,71 @@ export default function ChatApp() {
                 {activePartner.avatar || '😎'}
               </div>
             </div>
-            <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
+            {activePartner.isOnline ? (
+              <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
+            ) : (
+              <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-neutral-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
+            )}
           </div>
           <div>
             <h1 className="font-semibold text-base leading-tight">{activePartner.name}</h1>
-            <p className="text-[11px] text-blue-500 font-medium">
-              {partnerTyping ? 'typing...' : 'Online'}
+            <p className={`text-[11px] font-medium ${activePartner.isOnline ? 'text-emerald-500' : 'text-neutral-400'}`}>
+              {partnerTyping ? 'typing...' : (activePartner.isOnline ? 'Online' : formatLastSeen(activePartner.lastSeen))}
             </p>
           </div>
         </div>
       </header>
 
+      {/* STRICT UI RENDERING & LOADING STATE APPLIED HERE */}
       <main ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide">
-        <AnimatePresence>
-          {messages.map((msg, index) => (
-            <MessageBubble 
-              key={msg._id ? `db-${msg._id}` : `temp-${msg.id}-${index}`} 
-              msg={msg} 
-              isMe={msg.senderName === user.name} 
-              socketInstance={socket} 
-              currentUser={user.name}
-              onEdit={handleStartEdit}
-              onDelete={handleDeleteMessage}
-              onReact={handleAddReaction}
-            />
-          ))}
-        </AnimatePresence>
+        {isLoadingMessages ? (
+          <div className="h-full flex items-center justify-center">
+            <p className="text-neutral-500 text-sm font-medium animate-pulse">Loading chats...</p>
+          </div>
+        ) : (
+          <AnimatePresence>
+            {messages
+              .filter(msg => 
+                (msg.senderName === user.name && msg.recipientName === activePartner.name) ||
+                (msg.senderName === activePartner.name && msg.recipientName === user.name)
+              )
+              .map((msg, index) => (
+              <MessageBubble 
+                key={msg._id ? `db-${msg._id}` : `temp-${msg.id}-${index}`} 
+                msg={msg} 
+                isMe={msg.senderName === user.name} 
+                socketInstance={socket} 
+                currentUser={user.name}
+                onEdit={handleStartEdit}
+                onDelete={handleDeleteMessage}
+                onReact={handleAddReaction}
+                onReply={handleStartReply}
+              />
+            ))}
+          </AnimatePresence>
+        )}
       </main>
 
       <footer className="p-3 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-lg border-t border-neutral-100 dark:border-neutral-900 sticky bottom-0 z-40 pb-safe">
+        {replyingToMessage && (
+          <div className="flex items-center justify-between px-3 py-2 mb-2 bg-neutral-100 dark:bg-neutral-900 rounded-xl text-sm border-l-4 border-pink-500 transition-all">
+            <div className="flex flex-col truncate pr-2">
+              <span className="font-semibold text-pink-500 text-[11px] uppercase tracking-wider mb-0.5">
+                Replying to {replyingToMessage.senderName === user.name ? 'Yourself' : replyingToMessage.senderName}
+              </span>
+              <span className="text-neutral-600 dark:text-neutral-400 text-xs truncate">{replyingToMessage.text}</span>
+            </div>
+            <button onClick={() => setReplyingToMessage(null)} className="text-neutral-400 hover:text-white p-1 transition">✕</button>
+          </div>
+        )}
+
         {editingMessageId && (
           <div className="flex items-center justify-between px-3 py-1.5 mb-2 bg-neutral-800/50 rounded-xl text-xs text-neutral-300">
             <span>Editing message...</span>
             <button onClick={() => { setEditingMessageId(null); setInputText(''); }} className="text-rose-400 hover:underline">Cancel</button>
           </div>
         )}
+        
         <div className="flex items-end gap-2 bg-neutral-100 dark:bg-neutral-900 rounded-3xl p-1.5 pr-3 focus-within:ring-2 focus-within:ring-pink-500/20 transition-all">
           <textarea 
             value={inputText} 
