@@ -14,27 +14,45 @@ export async function POST(req: Request) {
     const formattedName = name.trim();
 
     if (action === 'register') {
-      const existingUser = await User.findOne({ name: formattedName });
+      const existingUser = await User.findOne({ 
+        name: { $regex: new RegExp(`^${formattedName}$`, 'i') } 
+      });
+      
       if (existingUser) {
-        return NextResponse.json({ error: 'User already exists. Please log in.' }, { status: 400 });
+        return NextResponse.json({ error: 'Username already exists. Please log in.' }, { status: 400 });
       }
       
-      const newUser = await User.create({ name: formattedName, password, avatar: '' });
+      const newUser = await User.create({ name: formattedName, password, avatar: '😎' });
       return NextResponse.json({ 
         success: true, 
-        user: { id: newUser._id.toString(), name: newUser.name, avatar: newUser.avatar || '' } 
+        user: { 
+          id: newUser._id.toString(), 
+          name: newUser.name, 
+          avatar: newUser.avatar,
+          chatBackgrounds: newUser.chatBackgrounds || {} 
+        } 
       });
     } 
     
     if (action === 'login') {
-      const user = await User.findOne({ name: formattedName, password });
+      const user = await User.findOne({ name: formattedName });
+      
       if (!user) {
-        return NextResponse.json({ error: 'Invalid name or password' }, { status: 401 });
+        return NextResponse.json({ error: 'Account not found. Please register.' }, { status: 404 });
+      }
+
+      if (user.password !== password) {
+        return NextResponse.json({ error: 'Invalid password' }, { status: 401 });
       }
       
       return NextResponse.json({ 
         success: true, 
-        user: { id: user._id.toString(), name: user.name, avatar: user.avatar || '' } 
+        user: { 
+          id: user._id.toString(), 
+          name: user.name, 
+          avatar: user.avatar || '',
+          chatBackgrounds: user.chatBackgrounds || {} 
+        } 
       });
     }
 

@@ -333,7 +333,7 @@ export default function ChatApp() {
       const res = await fetch('/api/users', { 
         method: 'PATCH', 
         headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ userId: user.id, name: editNameInput.trim(), avatar: selectedEmojiAvatar }) 
+        body: JSON.stringify({ userId: user._id, name: editNameInput.trim(), avatar: selectedEmojiAvatar }) 
       });
       const data = await res.json();
       if (data.success) {
@@ -356,7 +356,7 @@ export default function ChatApp() {
       await fetch('/api/users', { 
         method: 'PATCH', 
         headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ userId: user.id, chatBackgrounds: updatedBackgrounds }) 
+        body: JSON.stringify({ userId: user._id, chatBackgrounds: updatedBackgrounds }) 
       });
     } catch (err) { console.error(err); }
   };

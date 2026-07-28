@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   title: 'Private Chat',
   description: '1-on-1 Realtime Chat',
   manifest: '/manifest.json',
+  icons: {
+    icon: '/icon.png',
+    apple: '/icon.png', 
+  },
 }
 
 export const viewport: Viewport = {
@@ -16,7 +20,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body className={inter.className}>{children}</body>
     </html>
   )

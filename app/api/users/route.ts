@@ -5,6 +5,7 @@ import { User } from '../../../models/User';
 export async function GET() {
   try {
     await connectToDatabase();
+    // Keeping your secure projection: only fetching public data for the users list
     const users = await User.find({}, 'name avatar isOnline lastSeen');
     return NextResponse.json(users);
   } catch (error) {
@@ -16,7 +17,8 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     await connectToDatabase();
-    const { userId, name, avatar } = await req.json();
+    // 👇 Added chatBackgrounds to the extracted request data 👇
+    const { userId, name, avatar, chatBackgrounds } = await req.json();
 
     if (!userId) {
       return NextResponse.json({ error: 'User ID required' }, { status: 400 });
@@ -25,6 +27,8 @@ export async function PATCH(req: Request) {
     const updateData: any = {};
     if (name) updateData.name = name.trim();
     if (avatar !== undefined) updateData.avatar = avatar;
+    // 👇 Append the chatBackgrounds to the database update payload 👇
+    if (chatBackgrounds !== undefined) updateData.chatBackgrounds = chatBackgrounds;
 
     // Fixed Mongoose deprecation warning by using returnDocument: 'after'
     const updatedUser = await User.findByIdAndUpdate(
@@ -39,7 +43,13 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json({ 
       success: true, 
-      user: { id: updatedUser._id.toString(), name: updatedUser.name, avatar: updatedUser.avatar } 
+      user: { 
+        id: updatedUser._id.toString(), 
+        name: updatedUser.name, 
+        avatar: updatedUser.avatar,
+        // 👇 Return the updated backgrounds back to the frontend 👇
+        chatBackgrounds: updatedUser.chatBackgrounds || {} 
+      } 
     });
   } catch (error) {
     console.error("PATCH /api/users ERROR:", error);

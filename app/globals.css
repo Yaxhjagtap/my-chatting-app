@@ -19,7 +19,14 @@ html, body {
   overscroll-behavior-y: none;
   -webkit-user-select: none;
   user-select: none;
-  background-color: #0a0a0a;
+}
+
+body {
+  @apply bg-neutral-50 text-neutral-900 transition-colors duration-300 ease-in-out;
+}
+
+html.dark body {
+  @apply bg-[#0a0a0a] text-neutral-50;
 }
 
 .text-\[15px\] {
