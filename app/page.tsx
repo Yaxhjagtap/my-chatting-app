@@ -246,7 +246,7 @@ export default function ChatApp() {
     socket.emit('user_connected', user.name);
 
     socket.on('initial_statuses', (statuses: any) => {
-      const statusMap = new Map(statuses);
+      const statusMap = new Map<string, any>(statuses);
       setUsersList((prev) => prev.map(u => {
         const status = statusMap.get(u.name);
         return status ? { ...u, isOnline: status.isOnline, lastSeen: status.lastSeen } : u;
@@ -280,12 +280,7 @@ export default function ChatApp() {
           if (SPECIAL_EMOJIS.includes(cleanText)) {
             triggerAnimationRef.current(cleanText);
           }
-        } else {
-          // If message is received for a chat that isn't currently active, update local messages list so the preview updates
-          setMessages((prev) => prev.some(m => (data._id && m._id === data._id) || m.id === data.id) ? prev : [...prev, data]);
         }
-      } else {
-        setMessages((prev) => prev.some(m => (data._id && m._id === data._id) || m.id === data.id) ? prev : [...prev, data]);
       }
     });
 
@@ -298,47 +293,17 @@ export default function ChatApp() {
     return () => { if (socket) socket.disconnect(); };
   }, [user?.name]);
 
-  // Fetch all messages for the current user initially so we can calculate previews and unread counts for all chats
   useEffect(() => {
-    if (!user) return;
-    const fetchAllMessages = async () => {
+    if (!user || !activePartner) return;
+    const fetchMessages = async () => {
+      setIsLoadingMessages(true);
       try {
-        // Fetch users first to iterate and get message history or fetch a general messages route if available.
-        // Since our backend has /api/messages?user1=...&user2=..., we can fetch for each partner or fetch all. 
-        // Let's fetch messages for all users in the list:
-      } catch (err) { console.error(err); }
+        const res = await fetch(`/api/messages?user1=${user.name}&user2=${activePartner.name}`);
+        if (res.ok) setMessages(await res.json());
+      } catch (error) { console.error(error); } finally { setIsLoadingMessages(false); }
     };
-    fetchAllMessages();
-  }, [user?.name]);
-
-  // To make sure previews update dynamically, let's fetch messages for active partner or all partners when user is logged in
-  useEffect(() => {
-    if (!user) return;
-    const fetchAllChatsMessages = async () => {
-      try {
-        const res = await fetch('/api/users');
-        if (res.ok) {
-          const data = await res.json();
-          const otherUsers = data.filter((u: UserType) => u.name.toLowerCase() !== user.name.toLowerCase());
-          setUsersList(otherUsers);
-
-          // Fetch messages for each user to populate initial message previews
-          for (const partner of otherUsers) {
-            const msgRes = await fetch(`/api/messages?user1=${user.name}&user2=${partner.name}`);
-            if (msgRes.ok) {
-              const partnerMsgs = await msgRes.json();
-              setMessages(prev => {
-                const existingIds = new Set(prev.map(m => m._id || m.id));
-                const newMsgs = partnerMsgs.filter((m: MessageType) => !existingIds.has(m._id || m.id));
-                return [...prev, ...newMsgs];
-              });
-            }
-          }
-        }
-      } catch (err) { console.error(err); }
-    };
-    fetchAllChatsMessages();
-  }, [user?.name]);
+    fetchMessages();
+  }, [activePartner?.name, user?.name]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -368,7 +333,7 @@ export default function ChatApp() {
       const res = await fetch('/api/users', { 
         method: 'PATCH', 
         headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ userId: user.id, name: editNameInput.trim(), avatar: selectedEmojiAvatar }) 
+        body: JSON.stringify({ userId: user._id, name: editNameInput.trim(), avatar: selectedEmojiAvatar }) 
       });
       const data = await res.json();
       if (data.success) {
@@ -391,7 +356,7 @@ export default function ChatApp() {
       await fetch('/api/users', { 
         method: 'PATCH', 
         headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ userId: user.id, chatBackgrounds: updatedBackgrounds }) 
+        body: JSON.stringify({ userId: user._id, chatBackgrounds: updatedBackgrounds }) 
       });
     } catch (err) { console.error(err); }
   };
@@ -495,36 +460,36 @@ export default function ChatApp() {
 
   if (!user) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-gradient-to-tr from-pink-500/10 via-purple-500/10 to-blue-500/10 dark:from-[#0a0a0a] dark:to-[#121212] px-4 font-sans overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[45%] h-[45%] bg-pink-500/20 blur-[140px] rounded-full pointer-events-none"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[45%] h-[45%] bg-blue-500/20 blur-[140px] rounded-full pointer-events-none"></div>
+      <div className="fixed inset-0 flex items-center justify-center bg-neutral-50 dark:bg-[#0a0a0a] px-4 font-sans transition-colors duration-300 overflow-hidden">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-pink-500/20 dark:bg-pink-600/10 blur-[120px] rounded-full pointer-events-none"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500/20 dark:bg-blue-600/10 blur-[120px] rounded-full pointer-events-none"></div>
 
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm bg-white/90 dark:bg-[#141414]/95 backdrop-blur-2xl border border-white/20 dark:border-neutral-800 p-8 rounded-[32px] shadow-2xl space-y-6 relative z-10">
-          <button onClick={toggleTheme} className="absolute top-6 right-6 p-2.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition hover:scale-105"><Sun size={18} className="hidden dark:block" /><Moon size={18} className="block dark:hidden" /></button>
+        <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm bg-white/80 dark:bg-[#141414]/90 backdrop-blur-xl border border-neutral-200/50 dark:border-neutral-800 p-8 rounded-3xl shadow-2xl space-y-6 relative z-10">
+          <button onClick={toggleTheme} className="absolute top-6 right-6 p-2 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 transition"><Sun size={18} className="hidden dark:block" /><Moon size={18} className="block dark:hidden" /></button>
           <div className="text-center space-y-2 pt-2">
-            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500">{isRegistering ? 'Create Account' : 'Welcome Back'}</h1>
-            <p className="text-sm text-neutral-500 dark:text-neutral-400">{isRegistering ? 'Sign up to start chatting' : 'Log in to your account'}</p>
+            <h1 className="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-pink-500 to-blue-500">{isRegistering ? 'Create Account' : 'Welcome Back'}</h1>
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">{isRegistering ? 'Register to start messaging' : 'Log in to your account'}</p>
           </div>
-          {authError && <div className="p-3 text-xs font-medium text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-100 dark:border-rose-500/20 rounded-2xl text-center">{authError}</div>}
+          {authError && <div className="p-3 text-xs font-medium text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-100 dark:border-rose-500/20 rounded-xl text-center">{authError}</div>}
           <form onSubmit={handleAuth} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-neutral-600 dark:text-neutral-400 px-1 uppercase tracking-wider">Username</label>
               <div className="relative flex items-center">
-                <UserIcon size={18} className="absolute left-4 text-neutral-400 z-10" />
-                <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Enter your name" className="w-full bg-neutral-100 dark:bg-neutral-900 text-neutral-900 dark:text-white placeholder:text-neutral-400 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-3.5 pl-12 pr-4 text-[15px] outline-none focus:ring-2 focus:ring-pink-500/30 focus:border-pink-500 transition-all shadow-inner" required />
+                <UserIcon size={18} className="absolute left-3.5 text-neutral-400 z-10" />
+                <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Enter your name" className="w-full bg-neutral-50/50 dark:bg-neutral-900/50 text-neutral-900 dark:text-white placeholder:text-neutral-400 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-3.5 pl-11 pr-4 text-[15px] outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 transition-all shadow-sm" required />
               </div>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-neutral-600 dark:text-neutral-400 px-1 uppercase tracking-wider">Password</label>
               <div className="relative flex items-center">
-                <Lock size={18} className="absolute left-4 text-neutral-400 z-10" />
-                <input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="••••••••" className="w-full bg-neutral-100 dark:bg-neutral-900 text-neutral-900 dark:text-white placeholder:text-neutral-400 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-3.5 pl-12 pr-4 text-[15px] outline-none focus:ring-2 focus:ring-pink-500/30 focus:border-pink-500 transition-all shadow-inner" required />
+                <Lock size={18} className="absolute left-3.5 text-neutral-400 z-10" />
+                <input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="••••••••" className="w-full bg-neutral-50/50 dark:bg-neutral-900/50 text-neutral-900 dark:text-white placeholder:text-neutral-400 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-3.5 pl-11 pr-4 text-[15px] outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 transition-all shadow-sm" required />
               </div>
             </div>
-            <button type="submit" disabled={authLoading} className="w-full py-4 mt-2 rounded-2xl bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 text-white font-bold text-[15px] shadow-lg shadow-pink-500/25 hover:opacity-95 active:scale-[0.98] transition-all disabled:opacity-50">{authLoading ? 'Please wait...' : isRegistering ? 'Register' : 'Log In'}</button>
+            <button type="submit" disabled={authLoading} className="w-full py-3.5 mt-2 rounded-2xl bg-gradient-to-r from-pink-500 to-blue-500 text-white font-semibold text-[15px] shadow-lg hover:shadow-pink-500/25 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 disabled:active:scale-100">{authLoading ? 'Please wait...' : isRegistering ? 'Register' : 'Log In'}</button>
           </form>
           <div className="text-center pt-2">
-            <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="text-sm font-semibold text-pink-500 hover:underline">{isRegistering ? 'Already have an account? Log in' : "Don't have an account? Register"}</button>
+            <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="text-sm font-medium text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors">{isRegistering ? 'Already have an account? Log in' : "Don't have an account? Register"}</button>
           </div>
         </motion.div>
       </div>
@@ -533,116 +498,93 @@ export default function ChatApp() {
 
   if (!activePartner) {
     return (
-      <div className="fixed inset-0 flex flex-col bg-gradient-to-br from-neutral-50 via-pink-50/20 to-blue-50/20 dark:from-[#0a0a0a] dark:via-[#120f18] dark:to-[#0a0a0a] text-neutral-900 dark:text-neutral-50 font-sans overflow-hidden">
-        {/* Top Header */}
-        <header className="shrink-0 flex items-center justify-between px-6 py-4 bg-white/70 dark:bg-[#141414]/70 backdrop-blur-2xl z-50 border-b border-neutral-200/60 dark:border-neutral-800 shadow-sm">
-          <div className="flex items-center gap-3.5 cursor-pointer group" onClick={() => setShowProfileModal(true)}>
+      <div className="fixed inset-0 flex flex-col bg-neutral-50 dark:bg-[#0a0a0a] text-neutral-900 dark:text-neutral-50 font-sans transition-colors duration-300 overflow-hidden">
+        <header className="shrink-0 flex items-center justify-between px-4 py-4 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl z-50 border-b border-neutral-200 dark:border-neutral-900 shadow-sm">
+          <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setShowProfileModal(true)}>
             <div className="relative">
-              <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-pink-500 via-purple-500 to-blue-500 p-[2.5px] shadow-md group-hover:scale-105 transition-transform">
-                <div className="w-full h-full rounded-full bg-white dark:bg-[#141414] overflow-hidden flex items-center justify-center text-2xl">{user.avatar || '😎'}</div>
+              <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-pink-500 to-blue-500 p-[2px] shadow-sm group-hover:shadow-md transition-all">
+                <div className="w-full h-full rounded-full bg-white dark:bg-[#141414] overflow-hidden flex items-center justify-center text-xl">{user.avatar || '😎'}</div>
               </div>
-              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-[#141414] rounded-full"></div>
+              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
             </div>
             <div>
               <h1 className="font-bold text-base leading-tight flex items-center gap-1.5 text-neutral-900 dark:text-white">{user.name} <Settings size={14} className="text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity" /></h1>
-              <p className="text-xs text-emerald-500 font-semibold tracking-wide">Online</p>
+              <p className="text-xs text-emerald-500 font-medium">Online</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={toggleTheme} className="p-3 rounded-2xl bg-white/80 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 shadow-sm hover:scale-105 transition-all"><Sun size={18} className="hidden dark:block" /><Moon size={18} className="block dark:hidden" /></button>
-            <button onClick={handleLogout} title="Log Out" className="p-3 rounded-2xl bg-white/80 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700 text-rose-500 shadow-sm hover:scale-105 transition-all"><LogOut size={18} /></button>
+          <div className="flex items-center gap-1">
+            <button onClick={toggleTheme} className="p-2.5 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 dark:text-neutral-400 transition-colors"><Sun size={20} className="hidden dark:block" /><Moon size={20} className="block dark:hidden" /></button>
+            <button onClick={handleLogout} title="Log Out" className="p-2.5 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 dark:text-neutral-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"><LogOut size={20} /></button>
           </div>
         </header>
 
-        {/* Search Bar */}
-        <div className="px-6 py-4 shrink-0 max-w-2xl w-full mx-auto">
-          <div className="flex items-center gap-3 bg-white/80 dark:bg-[#141414]/80 backdrop-blur-xl px-5 py-3.5 rounded-2xl border border-neutral-200/80 dark:border-neutral-800 shadow-sm focus-within:ring-2 focus-within:ring-pink-500/30 focus-within:border-pink-500 transition-all">
-            <Search size={18} className="text-pink-500" />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search chats..." className="bg-transparent w-full text-[15px] outline-none text-neutral-900 dark:text-white placeholder:text-neutral-400 font-medium" />
+        <div className="px-4 py-4 shrink-0">
+          <div className="flex items-center gap-3 bg-white dark:bg-[#141414] px-4 py-3.5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm focus-within:ring-2 focus-within:ring-pink-500/20 focus-within:border-pink-500 transition-all">
+            <Search size={18} className="text-neutral-400" />
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search chats..." className="bg-transparent w-full text-[15px] outline-none text-neutral-900 dark:text-white placeholder:text-neutral-400" />
           </div>
         </div>
 
-        {/* WhatsApp-Style Chat List */}
-        <main className="flex-1 overflow-y-auto px-4 sm:px-6 max-w-2xl w-full mx-auto space-y-2 pb-6 scrollbar-hide">
-          <div className="px-2 py-1 text-xs font-extrabold uppercase tracking-widest text-pink-500/80">Recent Conversations</div>
+        <main className="flex-1 overflow-y-auto px-2 space-y-1">
+          <div className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-neutral-500">Recent Chats</div>
           {usersList.length === 0 ? (
-            <div className="text-center py-16 text-neutral-400 text-sm bg-white/40 dark:bg-[#141414]/40 rounded-3xl border border-dashed border-neutral-200 dark:border-neutral-800">No other users found. Register another account in a separate tab to chat!</div>
+            <div className="text-center py-12 text-neutral-500 text-sm">No other users found. Register another account in a separate tab to chat!</div>
           ) : (
-            usersList.filter(partner => partner.name.toLowerCase().includes(searchQuery.toLowerCase())).map((partner) => {
-              // Calculate last message & unread count for this partner
-              const partnerMessages = messages.filter(m => 
-                (m.senderName === user.name && m.recipientName === partner.name) || 
-                (m.senderName === partner.name && m.recipientName === user.name)
-              );
-              const lastMsg = partnerMessages[partnerMessages.length - 1];
-              const unreadCount = partnerMessages.filter(m => m.senderName === partner.name && m.status !== 'seen').length;
-
-              return (
-                <motion.div 
-                  key={partner._id} 
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => { 
-                    setActivePartner(partner); 
-                    localStorage.setItem('chat_active_partner', JSON.stringify(partner));
-                    setSearchQuery(''); 
-                  }} 
-                  className="flex items-center gap-4 p-4 rounded-3xl bg-white/70 dark:bg-[#141414]/70 backdrop-blur-xl hover:bg-white dark:hover:bg-[#1a1a1a] shadow-sm hover:shadow-md cursor-pointer transition-all border border-neutral-200/60 dark:border-neutral-800/80 group"
-                >
-                  <div className="relative shrink-0">
-                    <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-pink-500 via-purple-500 to-blue-500 p-[2.5px] shadow-sm">
-                      <div className="w-full h-full rounded-full bg-white dark:bg-[#141414] flex items-center justify-center text-2xl">{partner.avatar || '😎'}</div>
-                    </div>
-                    <div className={`absolute bottom-0 right-0 w-3.5 h-3.5 border-2 border-white dark:border-[#141414] rounded-full transition-colors ${partner.isOnline ? 'bg-emerald-500' : 'bg-neutral-400 dark:bg-neutral-600'}`}></div>
+            usersList.filter(partner => partner.name.toLowerCase().includes(searchQuery.toLowerCase())).map((partner) => (
+              <div 
+                key={partner._id} 
+                onClick={() => { 
+                  setActivePartner(partner); 
+                  localStorage.setItem('chat_active_partner', JSON.stringify(partner));
+                  setSearchQuery(''); 
+                }} 
+                className="flex items-center gap-4 p-3 mx-2 rounded-2xl bg-transparent hover:bg-white dark:hover:bg-[#141414] hover:shadow-sm cursor-pointer transition-all border border-transparent hover:border-neutral-200 dark:hover:border-neutral-800"
+              >
+                <div className="relative">
+                  <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-pink-400 to-blue-400 p-[2px]">
+                    <div className="w-full h-full rounded-full bg-white dark:bg-[#141414] flex items-center justify-center text-xl">{partner.avatar || '😎'}</div>
                   </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <h2 className="font-bold text-base text-neutral-900 dark:text-white truncate group-hover:text-pink-500 transition-colors">{partner.name}</h2>
-                      <span className="text-[11px] font-semibold text-neutral-400 dark:text-neutral-500 shrink-0 ml-2">{lastMsg ? lastMsg.time : ''}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-[13px] text-neutral-500 dark:text-neutral-400 truncate pr-2 font-medium">
-                        {lastMsg ? (lastMsg.senderName === user.name ? `You: ${lastMsg.text}` : lastMsg.text) : 'Tap to start chatting'}
-                      </p>
-                      {unreadCount > 0 && (
-                        <span className="shrink-0 bg-gradient-to-r from-pink-500 to-purple-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-sm animate-pulse">{unreadCount}</span>
-                      )}
-                    </div>
+                  <div className={`absolute bottom-0 right-0 w-3.5 h-3.5 border-2 border-white dark:border-[#0a0a0a] rounded-full transition-colors ${partner.isOnline ? 'bg-emerald-500' : 'bg-neutral-400 dark:bg-neutral-600'}`}></div>
+                </div>
+                <div className="flex-1 border-b border-neutral-100 dark:border-neutral-900/50 pb-3 mt-3 pr-2">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-semibold text-[15px] text-neutral-900 dark:text-white">{partner.name}</h2>
+                    <span className={`text-[11px] font-medium ${partner.isOnline ? 'text-emerald-500' : 'text-neutral-400 dark:text-neutral-500'}`}>{partner.isOnline ? 'Online' : 'Offline'}</span>
                   </div>
-                </motion.div>
-              );
-            })
+                  <p className="text-[13px] text-neutral-500 dark:text-neutral-400 truncate mt-0.5">Tap to open conversation</p>
+                </div>
+              </div>
+            ))
           )}
         </main>
 
         {showProfileModal && (
-          <div className="fixed inset-0 bg-neutral-900/50 dark:bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <motion.div initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} className="w-full sm:max-w-md bg-white dark:bg-[#141414] border-t sm:border border-neutral-200 dark:border-neutral-800 p-8 rounded-t-[36px] sm:rounded-[32px] shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto scrollbar-hide">
+          <div className="fixed inset-0 bg-neutral-900/40 dark:bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <motion.div initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} className="w-full sm:max-w-md bg-white dark:bg-[#141414] border-t sm:border border-neutral-200 dark:border-neutral-800 p-6 rounded-t-3xl sm:rounded-3xl shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto scrollbar-hide">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-extrabold text-neutral-900 dark:text-white">Profile Settings</h2>
-                <button onClick={() => setShowProfileModal(false)} className="text-neutral-400 hover:text-neutral-600 dark:hover:text-white transition-colors p-2 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800">✕</button>
+                <h2 className="text-lg font-bold text-neutral-900 dark:text-white">Profile Settings</h2>
+                <button onClick={() => setShowProfileModal(false)} className="text-neutral-400 hover:text-neutral-600 dark:hover:text-white transition-colors">✕</button>
               </div>
 
               <div className="flex flex-col items-center gap-3">
-                <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-pink-500 via-purple-500 to-blue-500 p-[3px] shadow-lg">
-                  <div className="w-full h-full rounded-full bg-white dark:bg-[#141414] flex items-center justify-center text-4xl">{selectedEmojiAvatar}</div>
+                <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-pink-500 to-blue-500 p-[3px] shadow-md">
+                  <div className="w-full h-full rounded-full bg-white dark:bg-[#141414] flex items-center justify-center text-3xl">{selectedEmojiAvatar}</div>
                 </div>
-                <div className="grid grid-cols-7 gap-1.5 bg-neutral-50 dark:bg-neutral-900/60 p-3 rounded-2xl border border-neutral-100 dark:border-neutral-800 mt-2">
+                <div className="grid grid-cols-7 gap-1 bg-neutral-50 dark:bg-neutral-900/50 p-2.5 rounded-2xl border border-neutral-100 dark:border-neutral-800 mt-2">
                   {avatarEmojis.map((emoji) => (
-                    <button key={emoji} type="button" onClick={() => setSelectedEmojiAvatar(emoji)} className={`text-2xl p-2.5 rounded-xl transition-all ${selectedEmojiAvatar === emoji ? 'bg-white dark:bg-[#1f1f1f] border border-neutral-200 dark:border-neutral-700 shadow-sm scale-110' : 'hover:bg-neutral-200/50 dark:hover:bg-neutral-800 border border-transparent'}`}>{emoji}</button>
+                    <button key={emoji} type="button" onClick={() => setSelectedEmojiAvatar(emoji)} className={`text-xl p-2 rounded-xl transition-all ${selectedEmojiAvatar === emoji ? 'bg-white dark:bg-[#141414] border border-neutral-200 dark:border-neutral-700 shadow-sm scale-110' : 'hover:bg-neutral-200/50 dark:hover:bg-neutral-800 border border-transparent'}`}>{emoji}</button>
                   ))}
                 </div>
               </div>
 
-              <form onSubmit={handleUpdateProfile} className="space-y-4 border-t border-neutral-100 dark:border-neutral-800/80 pt-5">
+              <form onSubmit={handleUpdateProfile} className="space-y-4 border-t border-neutral-100 dark:border-neutral-800/60 pt-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-600 dark:text-neutral-400 px-1 uppercase tracking-wider">Display Name</label>
-                  <input type="text" value={editNameInput} onChange={(e) => setEditNameInput(e.target.value)} className="w-full bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-white border border-neutral-200 dark:border-neutral-800 rounded-2xl py-3.5 px-4 text-[15px] outline-none focus:ring-2 focus:ring-pink-500/30 focus:border-pink-500 transition-all shadow-inner font-medium" required />
+                  <label className="text-xs font-semibold text-neutral-600 dark:text-neutral-400 px-1 uppercase tracking-wider">Display Name</label>
+                  <input type="text" value={editNameInput} onChange={(e) => setEditNameInput(e.target.value)} className="w-full bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-white border border-neutral-200 dark:border-neutral-800 rounded-2xl py-3 px-4 text-[15px] outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 transition-all shadow-sm" required />
                 </div>
-                <div className="flex gap-3 pt-3">
-                  <button type="button" onClick={() => setShowProfileModal(false)} className="flex-1 py-3.5 rounded-2xl bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold text-[15px] hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors">Close</button>
-                  <button type="submit" className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold text-[15px] shadow-lg shadow-pink-500/25 hover:opacity-90 active:scale-[0.98] transition-all">Save Profile</button>
+                <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={() => setShowProfileModal(false)} className="flex-1 py-3.5 rounded-2xl bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-semibold text-[15px] hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors">Close</button>
+                  <button type="submit" className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-pink-500 to-blue-500 text-white font-semibold text-[15px] shadow-md hover:opacity-90 active:scale-[0.98] transition-all">Save Profile</button>
                 </div>
               </form>
             </motion.div>
@@ -769,7 +711,7 @@ export default function ChatApp() {
                 className="absolute bottom-14 left-0 bg-white/90 dark:bg-[#1a1a1a]/95 backdrop-blur-xl border border-neutral-200 dark:border-neutral-800 p-2.5 rounded-2xl shadow-xl flex gap-1.5 z-50 flex-wrap sm:flex-nowrap"
               >
                 {SPECIAL_EMOJIS.map(emoji => (
-                  <button key={emoji} onClick={() => handleSendSpecialEmoji(emoji)} className="text-2xl sm:text-3xl hover:scale-125 transition-transform p-1.5" title={`Send Magic ${emoji}`}>
+                  <button key={emoji} onClick={() => { handleSendSpecialEmoji(emoji); }} className="text-2xl sm:text-3xl hover:scale-125 transition-transform p-1.5" title={`Send Magic ${emoji}`}>
                     {emoji}
                   </button>
                 ))}
