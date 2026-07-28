@@ -134,7 +134,15 @@ const MessageBubble = ({ msg, isMe, socketInstance, currentUser, onEdit, onDelet
 
       <div className={`flex items-center gap-1 mt-2 px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
         <span className="text-[10px] font-medium text-neutral-500/80 dark:text-neutral-400/80">{msg.time}</span>
-        {isMe && (msg.status === 'seen' ? <CheckCheck size={14} className="text-blue-500" /> : <Check size={14} className="text-neutral-400" />)}
+        {isMe && (
+          msg.status === 'seen' ? (
+            <CheckCheck size={14} className="text-blue-500" />
+          ) : msg.status === 'delivered' ? (
+            <CheckCheck size={14} className="text-neutral-400" />
+          ) : (
+            <Check size={14} className="text-neutral-400" />
+          )
+        )}
       </div>
     </motion.div>
   );
@@ -229,9 +237,16 @@ export default function ChatApp() {
     return `Last seen at ${new Date(dateString).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
   };
 
-  // Fetch users and initialize message previews across all conversations properly
+  // Robust mobile online status handler with visibility, focus & heartbeat listeners
   useEffect(() => {
     if (!user) return;
+
+    const emitConnection = () => {
+      if (socket && socket.connected) {
+        socket.emit('user_connected', user.name);
+      }
+    };
+
     const fetchUsersAndMessages = async () => {
       try {
         const res = await fetch('/api/users');
@@ -257,7 +272,20 @@ export default function ChatApp() {
     fetchUsersAndMessages();
 
     socket = io({ transports: ['websocket', 'polling'] });
-    socket.emit('user_connected', user.name);
+    emitConnection();
+
+    // Re-emit connection whenever mobile browser tab becomes visible or gains focus again
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        emitConnection();
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    // Heartbeat ping every 15 seconds to prevent mobile socket stale timeouts
+    const heartbeatInterval = setInterval(emitConnection, 15000);
 
     socket.on('initial_statuses', (statuses: any) => {
       const statusMap = new Map<string, any>(statuses);
@@ -281,7 +309,6 @@ export default function ChatApp() {
     });
 
     socket.on('receive_message', (data: MessageType) => {
-      // Append message globally so homepage previews update immediately for any chat
       setMessages((prev) => prev.some(m => (data._id && m._id === data._id) || m.id === data.id) ? prev : [...prev, data]);
       
       const currentPartner = activePartnerRef.current;
@@ -305,7 +332,12 @@ export default function ChatApp() {
     socket.on('user_typing', (data: any) => { if (activePartnerRef.current && data.sender === activePartnerRef.current.name) setPartnerTyping(data.isTyping); });
     socket.on('message_seen_update', (data: any) => { setMessages((prev) => prev.map((msg) => (msg._id === data.messageId || msg.id === data.messageId) ? { ...msg, status: 'seen' } : msg)); });
 
-    return () => { if (socket) socket.disconnect(); };
+    return () => {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      clearInterval(heartbeatInterval);
+      if (socket) socket.disconnect();
+    };
   }, [user?.name]);
 
   useEffect(() => {
@@ -370,12 +402,10 @@ export default function ChatApp() {
     if (!user || !activePartner) return;
     const updatedBackgrounds = { ...(user.chatBackgrounds || {}), [activePartner.name]: bgId };
     
-    // Smooth instant update locally
     const updatedUser = { ...user, chatBackgrounds: updatedBackgrounds };
     setUser(updatedUser);
     localStorage.setItem('chat_user', JSON.stringify(updatedUser));
 
-    // Async backend update
     fetch('/api/users', { 
       method: 'PATCH', 
       headers: { 'Content-Type': 'application/json' }, 
@@ -415,7 +445,7 @@ export default function ChatApp() {
     const newMessage: MessageType = {
       id: tempId, senderName: user.name, recipientName: activePartner.name, text: cleanText,
       time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }), 
-      status: 'sent', reactions: [],
+      status: 'delivered', reactions: [],
       replyTo: replyingToMessage ? { id: replyingToMessage._id || replyingToMessage.id, senderName: replyingToMessage.senderName, text: replyingToMessage.text } : undefined
     };
 
@@ -427,7 +457,7 @@ export default function ChatApp() {
     try {
       const res = await fetch('/api/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newMessage) });
       const dbData = await res.json();
-      if (dbData.success) setMessages((prev) => prev.map((msg) => msg.id === tempId ? { ...msg, _id: dbData.message._id } : msg));
+      if (dbData.success) setMessages((prev) => prev.map((msg) => msg.id === tempId ? { ...msg, _id: dbData.message._id, status: 'delivered' } : msg));
     } catch (error) { console.error(error); }
   };
 
@@ -440,7 +470,7 @@ export default function ChatApp() {
     const newMessage: MessageType = {
       id: tempId, senderName: user.name, recipientName: activePartner.name, text: emoji,
       time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }), 
-      status: 'sent', reactions: [],
+      status: 'delivered', reactions: [],
       replyTo: replyingToMessage ? { id: replyingToMessage._id || replyingToMessage.id, senderName: replyingToMessage.senderName, text: replyingToMessage.text } : undefined
     };
 
@@ -453,7 +483,7 @@ export default function ChatApp() {
     try {
       const res = await fetch('/api/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newMessage) });
       const dbData = await res.json();
-      if (dbData.success) setMessages((prev) => prev.map((msg) => msg.id === tempId ? { ...msg, _id: dbData.message._id } : msg));
+      if (dbData.success) setMessages((prev) => prev.map((msg) => msg.id === tempId ? { ...msg, _id: dbData.message._id, status: 'delivered' } : msg));
     } catch (error) { console.error(error); }
   };
 
@@ -521,39 +551,36 @@ export default function ChatApp() {
   if (!activePartner) {
     return (
       <div className="h-[100dvh] w-full flex flex-col bg-neutral-50 dark:bg-[#0a0a0a] text-neutral-900 dark:text-neutral-50 font-sans transition-colors duration-300 overflow-hidden">
-        {/* Improved Modern Sticky Header */}
-        <header className="shrink-0 flex items-center justify-between px-5 py-3.5 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-xl z-50 border-b border-neutral-200/80 dark:border-neutral-800/80 shadow-sm">
-          <div className="flex items-center gap-3.5 cursor-pointer group" onClick={() => setShowProfileModal(true)}>
+        <header className="shrink-0 flex items-center justify-between px-4 py-4 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl z-50 border-b border-neutral-200 dark:border-neutral-900 shadow-sm">
+          <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setShowProfileModal(true)}>
             <div className="relative">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-pink-500 via-purple-500 to-blue-500 p-[2px] shadow-md group-hover:scale-105 transition-transform">
-                <div className="w-full h-full rounded-[14px] bg-white dark:bg-[#141414] overflow-hidden flex items-center justify-center text-2xl">{user.avatar || '😎'}</div>
+              <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-pink-500 to-blue-500 p-[2px] shadow-sm group-hover:shadow-md transition-all">
+                <div className="w-full h-full rounded-full bg-white dark:bg-[#141414] overflow-hidden flex items-center justify-center text-xl">{user.avatar || '😎'}</div>
               </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
+              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-[#0a0a0a] rounded-full"></div>
             </div>
             <div>
-              <h1 className="font-bold text-[16px] leading-tight flex items-center gap-1.5 text-neutral-900 dark:text-white">{user.name} <Settings size={13} className="text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity" /></h1>
-              <p className="text-xs text-emerald-500 font-semibold mt-0.5">Online</p>
+              <h1 className="font-bold text-base leading-tight flex items-center gap-1.5 text-neutral-900 dark:text-white">{user.name} <Settings size={14} className="text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity" /></h1>
+              <p className="text-xs text-emerald-500 font-medium">Online</p>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button onClick={toggleTheme} className="p-2.5 rounded-2xl hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition-colors"><Sun size={19} className="hidden dark:block" /><Moon size={19} className="block dark:hidden" /></button>
-            <button onClick={handleLogout} title="Log Out" className="p-2.5 rounded-2xl hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"><LogOut size={19} /></button>
+          <div className="flex items-center gap-1">
+            <button onClick={toggleTheme} className="p-2.5 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 dark:text-neutral-400 transition-colors"><Sun size={20} className="hidden dark:block" /><Moon size={20} className="block dark:hidden" /></button>
+            <button onClick={handleLogout} title="Log Out" className="p-2.5 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 dark:text-neutral-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"><LogOut size={20} /></button>
           </div>
         </header>
 
-        {/* Search Bar */}
-        <div className="px-4 py-3 shrink-0 max-w-xl w-full mx-auto">
-          <div className="flex items-center gap-3 bg-white dark:bg-[#141414] px-4 py-3 rounded-2xl border border-neutral-200/80 dark:border-neutral-800 shadow-sm focus-within:ring-2 focus-within:ring-pink-500/20 focus-within:border-pink-500 transition-all">
+        <div className="px-4 py-4 shrink-0">
+          <div className="flex items-center gap-3 bg-white dark:bg-[#141414] px-4 py-3.5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm focus-within:ring-2 focus-within:ring-pink-500/20 focus-within:border-pink-500 transition-all">
             <Search size={18} className="text-neutral-400" />
             <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search chats..." className="bg-transparent w-full text-[15px] outline-none text-neutral-900 dark:text-white placeholder:text-neutral-400" />
           </div>
         </div>
 
-        {/* Improved Chat List Cards */}
-        <main className="flex-1 overflow-y-auto px-3 sm:px-4 max-w-xl w-full mx-auto space-y-1.5 pb-6 scrollbar-hide">
-          <div className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-pink-600 dark:text-pink-400">Recent Chats</div>
+        <main className="flex-1 overflow-y-auto px-2 space-y-1">
+          <div className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-pink-600 dark:text-pink-400">Recent Chats</div>
           {usersList.length === 0 ? (
-            <div className="text-center py-16 text-neutral-400 text-sm bg-white dark:bg-[#141414] rounded-3xl border border-neutral-200/60 dark:border-neutral-800/60 shadow-sm">No other users found. Register another account in a separate tab to chat!</div>
+            <div className="text-center py-12 text-neutral-500 text-sm">No other users found. Register another account in a separate tab to chat!</div>
           ) : (
             usersList.filter(partner => partner.name.toLowerCase().includes(searchQuery.toLowerCase())).map((partner) => {
               const partnerMessages = messages.filter(m => 
@@ -573,13 +600,13 @@ export default function ChatApp() {
                     localStorage.setItem('chat_active_partner', JSON.stringify(partner));
                     setSearchQuery(''); 
                   }} 
-                  className="flex items-center gap-3.5 p-3 rounded-2xl bg-white dark:bg-[#141414] hover:bg-neutral-50 dark:hover:bg-[#1a1a1a] shadow-sm cursor-pointer transition-all border border-neutral-200/60 dark:border-neutral-800/80 group"
+                  className="flex items-center gap-3.5 p-3 mx-2 rounded-2xl bg-white dark:bg-[#141414] hover:bg-neutral-50 dark:hover:bg-[#1a1a1a] shadow-sm cursor-pointer transition-all border border-neutral-200/60 dark:border-neutral-800/80 group"
                 >
                   <div className="relative shrink-0">
                     <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-pink-400 to-blue-400 p-[2px] shadow-sm">
                       <div className="w-full h-full rounded-[14px] bg-white dark:bg-[#141414] flex items-center justify-center text-xl">{partner.avatar || '😎'}</div>
                     </div>
-                    <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-white dark:border-[#141414] rounded-full transition-colors ${partner.isOnline ? 'bg-emerald-500' : 'bg-neutral-400 dark:bg-neutral-600'}`}></div>
+                    <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-white dark:border-[#0a0a0a] rounded-full transition-colors ${partner.isOnline ? 'bg-emerald-500' : 'bg-neutral-400 dark:bg-neutral-600'}`}></div>
                   </div>
 
                   <div className="flex-1 min-w-0 pr-1">
@@ -642,7 +669,8 @@ export default function ChatApp() {
 
   return (
     <div className="h-[100dvh] w-full flex flex-col bg-neutral-50 dark:bg-[#0a0a0a] text-neutral-900 dark:text-neutral-50 font-sans transition-colors duration-300 overflow-hidden">
-      <header className="shrink-0 flex items-center justify-between px-3 py-3 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl z-50 border-b border-neutral-200 dark:border-neutral-900 shadow-sm">
+      {/* Sticky Header that stays locked at top and never gets hidden or pushed out by keyboard */}
+      <header className="shrink-0 flex items-center justify-between px-3 py-3 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-xl z-50 border-b border-neutral-200 dark:border-neutral-900 shadow-sm">
         <div className="flex items-center gap-3">
           <button 
             onClick={() => { 
