@@ -193,7 +193,7 @@ export default function ChatApp() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [messages, setMessages] = useState<MessageType[]>([]);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false); // New loading state
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [inputText, setInputText] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [replyingToMessage, setReplyingToMessage] = useState<MessageType | null>(null);
@@ -201,6 +201,18 @@ export default function ChatApp() {
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const avatarEmojis = ['🦊', '🐼', '🐯', '🦁', '🦄', '🚀', '⭐', '💻', '😎', '🔥', '🌸', '⚡', '👑', '🍀'];
+
+  // 👇 FIX: Use refs to access latest user data in sockets without triggering infinite loops
+  const activePartnerRef = useRef(activePartner);
+  const userRef = useRef(user);
+
+  useEffect(() => {
+    activePartnerRef.current = activePartner;
+  }, [activePartner]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   useEffect(() => {
     const savedUser = localStorage.getItem('chat_user');
@@ -235,7 +247,6 @@ export default function ChatApp() {
     fetchUsers();
 
     socket = io({ transports: ['websocket', 'polling'] });
-
     socket.emit('user_connected', user.name);
 
     socket.on('initial_statuses', (statuses: [string, { isOnline: boolean, lastSeen: string | null }][]) => {
@@ -259,12 +270,15 @@ export default function ChatApp() {
       });
     });
 
-    // STRICT SOCKET FILTER APPLIED HERE
     socket.on('receive_message', (data: MessageType) => {
-      if (activePartner && user) {
+      // 👇 FIX: Use refs here instead of state objects
+      const currentPartner = activePartnerRef.current;
+      const currentUser = userRef.current;
+
+      if (currentPartner && currentUser) {
         const isExactCurrentChat = 
-          (data.senderName === user.name && data.recipientName === activePartner.name) ||
-          (data.senderName === activePartner.name && data.recipientName === user.name);
+          (data.senderName === currentUser.name && data.recipientName === currentPartner.name) ||
+          (data.senderName === currentPartner.name && data.recipientName === currentUser.name);
 
         if (isExactCurrentChat) {
           setMessages((prev) => {
@@ -290,7 +304,9 @@ export default function ChatApp() {
     });
 
     socket.on('user_typing', (data: { sender: string; isTyping: boolean }) => {
-      if (activePartner && data.sender === activePartner.name) {
+      // 👇 FIX: Use refs here too
+      const currentPartner = activePartnerRef.current;
+      if (currentPartner && data.sender === currentPartner.name) {
         setPartnerTyping(data.isTyping);
       }
     });
@@ -306,13 +322,14 @@ export default function ChatApp() {
     return () => {
       if (socket) socket.disconnect();
     };
-  }, [user, activePartner]);
+  // 👇 FIX: Strictly limit this useEffect to user.name so it connects only ONCE
+  }, [user?.name]);
 
   useEffect(() => {
     if (!user || !activePartner) return;
 
     const fetchMessages = async () => {
-      setIsLoadingMessages(true); // START LOADING
+      setIsLoadingMessages(true);
       try {
         const res = await fetch(`/api/messages?user1=${user.name}&user2=${activePartner.name}`);
         if (res.ok) {
@@ -322,11 +339,12 @@ export default function ChatApp() {
       } catch (error) {
         console.error("Failed to load chat history", error);
       } finally {
-        setIsLoadingMessages(false); // STOP LOADING
+        setIsLoadingMessages(false);
       }
     };
     fetchMessages();
-  }, [activePartner, user]);
+  // 👇 FIX: Only run this fetch when the NAMES change, not when the status updates
+  }, [activePartner?.name, user?.name]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -733,7 +751,6 @@ export default function ChatApp() {
         </div>
       </header>
 
-      {/* STRICT UI RENDERING & LOADING STATE APPLIED HERE */}
       <main ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide">
         {isLoadingMessages ? (
           <div className="h-full flex items-center justify-center">
